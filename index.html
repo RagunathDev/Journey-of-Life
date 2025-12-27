@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>The Scholar’s Journey</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;400;700&display=swap');
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #f8fafc;
+            font-family: 'Inter', sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas { display: block; }
+
+        /* UI Elements */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .thin-panel {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(15px);
+            border: 0.5px solid rgba(0, 0, 0, 0.08);
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-size: 0.7rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .progress-line-container {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 70%;
+            height: 1px;
+            background: rgba(0,0,0,0.05);
+        }
+
+        #progress-line-fill {
+            height: 100%;
+            width: 0%;
+            background: #000;
+            transition: width 0.3s ease;
+        }
+
+        .menu-screen {
+            position: absolute;
+            inset: 0;
+            background: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            transition: opacity 0.8s ease;
+            text-align: center;
+        }
+
+        .hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+
+        h1 { font-size: 3rem; font-weight: 200; letter-spacing: -0.05em; margin-bottom: 0.5rem; }
+        
+        .start-btn {
+            border: 1px solid #000;
+            padding: 14px 50px;
+            border-radius: 40px;
+            font-size: 0.75rem;
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .start-btn:hover { background: #000; color: #fff; transform: scale(1.05); }
+
+        #death-screen {
+            background: #000;
+            color: white;
+        }
+
+        #death-screen h1 { font-size: 1.5rem; opacity: 0.7; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div id="level-indicator" class="thin-panel" style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%);">Level 1: The Scholar</div>
+        
+        <div class="flex justify-between w-full p-8">
+            <div class="thin-panel">COLLECTED: <span id="stat-count">0</span></div>
+            <div class="thin-panel">SPEED: <span id="speed-meter">1.0</span>x</div>
+        </div>
+
+        <div class="progress-line-container">
+            <div id="progress-line-fill"></div>
+        </div>
+    </div>
+
+    <!-- Screens -->
+    <div id="main-menu" class="menu-screen">
+        <h1>THE SCHOLAR</h1>
+        <div class="mb-12 text-gray-400 text-xs tracking-[0.4em] uppercase">Phase I: Education</div>
+        <button class="start-btn" onclick="game.start(1)">Enter Life</button>
+    </div>
+
+    <div id="game-over" class="menu-screen hidden">
+        <h1>STRUGGLE</h1>
+        <div class="mb-8 text-gray-400 text-xs tracking-widest">Growth requires another attempt.</div>
+        <button class="start-btn" onclick="game.start(game.currentLevel)">Restart</button>
+    </div>
+
+    <div id="level-complete" class="menu-screen hidden">
+        <h1 id="complete-title">EVOLVED</h1>
+        <div class="mb-10 text-gray-400 text-xs tracking-[0.3em]">ACHIEVEMENT UNLOCKED</div>
+        <button id="next-btn" class="start-btn" onclick="game.nextLevel()">Next Stage</button>
+    </div>
+
+    <div id="death-screen" class="menu-screen hidden">
+        <h1 class="mb-4">THE CIRCLE IS COMPLETE</h1>
+        <div class="text-xs tracking-[0.5em] text-gray-500 uppercase">A life well lived.</div>
+        <button class="start-btn border-white text-white mt-12 hover:bg-white hover:text-black" onclick="location.reload()">Reincarnate</button>
+    </div>
+</div>
+
+<script>
+class Game {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.resize();
+        
+        this.state = 'MENU';
+        this.currentLevel = 1;
+        this.distance = 0;
+        this.maxDistance = 15000;
+        this.baseSpeed = 400;
+        this.currentSpeed = 400;
+        
+        this.player = {
+            x: 180,
+            y: 0,
+            w: 50,
+            h: 70,
+            gravity: 1,
+            stats: 0,
+            wheelRotation: 0,
+            yVisual: 0
+        };
+
+        this.objects = [];
+        this.decor = [];
+        this.confetti = [];
+        
+        window.addEventListener('resize', () => this.resize());
+        const trigger = () => { 
+            if(this.state === 'PLAYING') this.player.gravity *= -1; 
+        };
+        window.addEventListener('mousedown', trigger);
+        window.addEventListener('touchstart', (e) => { e.preventDefault(); trigger(); }, {passive: false});
+
+        requestAnimationFrame((t) => this.loop(t));
+    }
+
+    resize() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+        this.groundY = this.canvas.height * 0.72;
+        this.ceilY = this.canvas.height * 0.28;
+    }
+
+    initLevel(level) {
+        this.decor = [];
+        // Layers: 0-Cloud, 1-Far City, 2-Mid City, 3-Near Ground
+        for(let i=0; i<80; i++) {
+            this.decor.push({
+                x: i * 350 + Math.random() * 200,
+                depth: Math.random(), // 0 to 1
+                type: i < 20 ? 'natural' : (i < 50 ? 'light' : 'full'),
+                h: 100 + Math.random() * 400,
+                w: 50 + Math.random() * 100,
+                opacity: 0.1 + Math.random() * 0.3
+            });
+        }
+
+        this.objects = [];
+        const icons = ["", "📘", "💰", "💎"];
+        for(let i=1; i<50; i++) {
+            const ox = i * 500 + Math.random() * 300;
+            const isFloor = Math.random() > 0.45;
+            this.objects.push({
+                x: ox,
+                y: isFloor ? this.groundY - 100 : this.ceilY + 100,
+                type: 'COLLECT',
+                icon: icons[level],
+                active: true
+            });
+
+            if (i % 3 === 0) {
+                this.objects.push({
+                    x: ox + 250,
+                    y: isFloor ? this.groundY : this.ceilY,
+                    type: 'SPIKE',
+                    side: isFloor ? 'bottom' : 'top'
+                });
+            }
+        }
+    }
+
+    start(level) {
+        this.currentLevel = level;
+        this.state = 'PLAYING';
+        this.distance = 0;
+        this.player.stats = 0;
+        this.player.gravity = 1;
+        this.player.y = this.groundY - this.player.h;
+        this.player.yVisual = this.player.y;
+        this.confetti = [];
+        this.initLevel(level);
+        
+        const titles = ["", "The Scholar", "The Provider", "The Legacy"];
+        document.getElementById('level-indicator').innerText = `Level ${this.currentLevel}: ${titles[this.currentLevel]}`;
+        
+        document.querySelectorAll('.menu-screen').forEach(s => s.classList.add('hidden'));
+    }
+
+    nextLevel() {
+        if (this.currentLevel < 3) {
+            this.start(this.currentLevel + 1);
+        } else {
+            this.state = 'DEAD';
+            document.getElementById('death-screen').classList.remove('hidden');
+        }
+    }
+
+    update(dt) {
+        if (this.state !== 'PLAYING') {
+            if (this.state === 'COMPLETE') this.updateConfetti(dt);
+            return;
+        }
+
+        // Speed Adjustment: Increases with distance
+        const accel = 1 + (this.distance / this.maxDistance) * 0.5;
+        this.currentSpeed = (this.baseSpeed + (this.currentLevel * 100)) * accel;
+        this.distance += this.currentSpeed * dt;
+        this.player.wheelRotation += (this.currentSpeed * 0.02);
+        
+        document.getElementById('speed-meter').innerText = accel.toFixed(1);
+
+        // Smooth Y
+        const targetY = this.player.gravity === 1 ? this.groundY - this.player.h : this.ceilY;
+        this.player.yVisual += (targetY - this.player.yVisual) * 0.2;
+
+        // Collision
+        this.objects.forEach(obj => {
+            const rx = obj.x - this.distance;
+            if (rx > 120 && rx < 240) {
+                const dy = Math.abs((this.player.yVisual + this.player.h/2) - (obj.y + (obj.type === 'COLLECT' ? 0 : (obj.side === 'bottom' ? -20 : 20))));
+                if (obj.type === 'COLLECT' && obj.active && dy < 60) {
+                    obj.active = false;
+                    this.player.stats++;
+                    document.getElementById('stat-count').innerText = this.player.stats;
+                }
+                if (obj.type === 'SPIKE' && dy < 45) this.gameOver();
+            }
+        });
+
+        const prog = this.distance / this.maxDistance;
+        document.getElementById('progress-line-fill').style.width = (prog * 100) + '%';
+        if (prog >= 1) this.complete();
+    }
+
+    updateConfetti(dt) {
+        this.confetti.forEach(c => {
+            c.x += c.vx;
+            c.y += c.vy;
+            c.vy += 0.2; // gravity
+            c.rot += c.vr;
+        });
+    }
+
+    complete() {
+        this.state = 'COMPLETE';
+        this.triggerConfetti();
+        document.getElementById('level-complete').classList.remove('hidden');
+        if(this.currentLevel === 3) {
+            document.getElementById('next-btn').innerText = "FINISH JOURNEY";
+            document.getElementById('complete-title').innerText = "LEGACY SECURED";
+        }
+    }
+
+    triggerConfetti() {
+        for(let i=0; i<100; i++) {
+            this.confetti.push({
+                x: this.canvas.width/2,
+                y: this.canvas.height/2,
+                vx: (Math.random() - 0.5) * 20,
+                vy: (Math.random() - 0.7) * 20,
+                color: `hsl(${Math.random()*360}, 80%, 60%)`,
+                rot: Math.random() * Math.PI,
+                vr: (Math.random() - 0.5) * 0.2,
+                size: 5 + Math.random() * 10
+            });
+        }
+    }
+
+    gameOver() {
+        this.state = 'GAMEOVER';
+        document.getElementById('game-over').classList.remove('hidden');
+    }
+
+    draw() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        const prog = Math.min(this.distance / this.maxDistance, 1);
+
+        // Skybox
+        const bgGrad = this.ctx.createLinearGradient(0,0,0,this.canvas.height);
+        bgGrad.addColorStop(0, this.lerpColor('#f8fafc', '#020617', prog));
+        bgGrad.addColorStop(1, this.lerpColor('#e2e8f0', '#1e293b', prog));
+        this.ctx.fillStyle = bgGrad;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // 3D Parallax Decor
+        this.decor.forEach(d => {
+            const parallaxScale = 0.1 + (d.depth * 0.5); // Closer moves faster
+            const x = (d.x - (this.distance * parallaxScale)) % (this.canvas.width + 1000);
+            const drawX = x < -500 ? x + (this.canvas.width + 1000) : x;
+            
+            this.ctx.globalAlpha = d.opacity * (1 - prog * 0.5);
+            this.ctx.fillStyle = d.type === 'natural' ? '#94a3b8' : '#1e293b';
+            
+            if (d.type === 'natural') {
+                this.ctx.beginPath();
+                this.ctx.arc(drawX, this.groundY, d.size || 60, Math.PI, 0);
+                this.ctx.fill();
+            } else {
+                this.ctx.fillRect(drawX, this.groundY - d.h, d.w, d.h);
+                // Windows
+                if (prog > 0.5) {
+                    this.ctx.fillStyle = '#fef08a';
+                    this.ctx.globalAlpha = 0.4;
+                    this.ctx.fillRect(drawX + 10, this.groundY - d.h + 20, 5, 5);
+                }
+            }
+        });
+        this.ctx.globalAlpha = 1;
+
+        // Perspective Ground Lines
+        this.ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+        this.ctx.lineWidth = 1;
+        for(let i=0; i<5; i++) {
+            const ly = this.groundY + i*20;
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, ly); this.ctx.lineTo(this.canvas.width, ly);
+            this.ctx.stroke();
+        }
+
+        // Gameplay Objects
+        this.objects.forEach(obj => {
+            const x = obj.x - this.distance;
+            if (x < -100 || x > this.canvas.width + 100) return;
+
+            if (obj.type === 'COLLECT' && obj.active) {
+                this.ctx.font = '30px serif';
+                this.ctx.shadowBlur = 10;
+                this.ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                this.ctx.fillText(obj.icon, x, obj.y);
+                this.ctx.shadowBlur = 0;
+            } else if (obj.type === 'SPIKE') {
+                this.ctx.fillStyle = '#000';
+                this.ctx.beginPath();
+                const sy = obj.side === 'bottom' ? this.groundY : this.ceilY;
+                const h = obj.side === 'bottom' ? -40 : 40;
+                this.ctx.moveTo(x - 20, sy);
+                this.ctx.lineTo(x, sy + h);
+                this.ctx.lineTo(x + 20, sy);
+                this.ctx.fill();
+            }
+        });
+
+        // Flag at end
+        if (prog > 0.95) {
+            const fx = this.maxDistance + 200 - this.distance;
+            this.ctx.fillStyle = '#000';
+            this.ctx.fillRect(fx, this.groundY - 150, 5, 150);
+            this.ctx.fillRect(fx, this.groundY - 150, 80, 40);
+            this.ctx.fillStyle = '#fff';
+            this.ctx.font = 'bold 10px Inter';
+            this.ctx.fillText('FINISH', fx+10, this.groundY-125);
+        }
+
+        this.drawPlayer();
+        this.drawConfetti();
+    }
+
+    drawPlayer() {
+        const p = this.player;
+        const x = p.x;
+        const y = p.yVisual;
+        this.ctx.save();
+        this.ctx.translate(x, y);
+
+        if (this.currentLevel === 1) {
+            this.drawScholar();
+        } else if (this.currentLevel === 2) {
+            this.drawBike();
+        } else {
+            this.drawCar();
+        }
+        this.ctx.restore();
+    }
+
+    drawScholar() {
+        const walk = Math.sin(this.distance * 0.05) * 10;
+        // Wheel
+        this.ctx.save();
+        this.ctx.translate(50, 50);
+        this.ctx.rotate(this.player.wheelRotation);
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeStyle = '#000';
+        this.ctx.beginPath(); this.ctx.arc(0,0,30,0,Math.PI*2); this.ctx.stroke();
+        for(let i=0; i<8; i++) { this.ctx.rotate(Math.PI/4); this.ctx.moveTo(0,0); this.ctx.lineTo(30,0); }
+        this.ctx.stroke();
+        this.ctx.restore();
+
+        this.ctx.fillStyle = '#000';
+        this.ctx.fillRect(5, 45, 8, 20+walk); // Legs
+        this.ctx.fillRect(20, 45, 8, 20-walk);
+        this.ctx.fillRect(5, 10, 25, 40); // Torso
+        this.ctx.beginPath(); this.ctx.arc(17, 0, 10, 0, Math.PI*2); this.ctx.fill(); // Head
+        // Arms
+        this.ctx.strokeStyle = '#000';
+        this.ctx.beginPath(); this.ctx.moveTo(25, 20); this.ctx.lineTo(50, 50); this.ctx.stroke();
+        if(this.player.stats > 10) { // Hat
+            this.ctx.fillRect(0, -15, 34, 4);
+        }
+    }
+
+    drawBike() {
+        const bounce = Math.sin(this.distance * 0.1) * 3;
+        const wheelRot = this.player.wheelRotation * 1.5;
+        this.ctx.translate(0, bounce);
+        
+        // Detailed Bike
+        this.ctx.strokeStyle = '#000';
+        this.ctx.lineWidth = 2;
+        // Wheels
+        const drawWheel = (wx, wy) => {
+            this.ctx.save(); this.ctx.translate(wx, wy); this.ctx.rotate(wheelRot);
+            this.ctx.beginPath(); this.ctx.arc(0,0,18,0,Math.PI*2); this.ctx.stroke();
+            for(let i=0; i<6; i++) { this.ctx.rotate(Math.PI/3); this.ctx.moveTo(0,0); this.ctx.lineTo(18,0); }
+            this.ctx.stroke(); this.ctx.restore();
+        };
+        drawWheel(0, 50); drawWheel(60, 50);
+        // Frame
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, 50); this.ctx.lineTo(30, 50); this.ctx.lineTo(45, 25); this.ctx.lineTo(60, 50);
+        this.ctx.moveTo(30, 50); this.ctx.lineTo(25, 25); this.ctx.stroke();
+
+        // Couple
+        this.ctx.fillStyle = '#000';
+        this.ctx.fillRect(25, 5, 12, 25); // Man
+        this.ctx.beginPath(); this.ctx.arc(31, -2, 8, 0, Math.PI*2); this.ctx.fill();
+        this.ctx.fillRect(5, 10, 10, 25); // Woman
+        this.ctx.beginPath(); this.ctx.arc(10, 3, 8, 0, Math.PI*2); this.ctx.fill();
+    }
+
+    drawCar() {
+        const bounce = Math.sin(this.distance * 0.15) * 2;
+        this.ctx.translate(0, bounce);
+        
+        // Realish Silhouette Car
+        this.ctx.fillStyle = '#000';
+        this.ctx.beginPath();
+        this.ctx.roundRect(-30, 20, 130, 35, 10); // Body
+        this.ctx.fill();
+        this.ctx.beginPath();
+        this.ctx.roundRect(0, 0, 80, 25, [20, 20, 0, 0]); // Roof
+        this.ctx.fill();
+
+        // Wheels
+        const wRot = this.player.wheelRotation * 2;
+        const drawCarWheel = (wx) => {
+            this.ctx.save(); this.ctx.translate(wx, 55); this.ctx.rotate(wRot);
+            this.ctx.fillStyle = '#000';
+            this.ctx.beginPath(); this.ctx.arc(0,0,12,0,Math.PI*2); this.ctx.fill();
+            this.ctx.strokeStyle = '#fff'; this.ctx.lineWidth=1;
+            this.ctx.beginPath(); this.ctx.arc(0,0,8,0,Math.PI*2); this.ctx.stroke();
+            this.ctx.restore();
+        };
+        drawCarWheel(0); drawCarWheel(80);
+
+        // Family
+        this.ctx.fillStyle = '#fff';
+        this.ctx.globalAlpha = 0.5;
+        this.ctx.beginPath();
+        this.ctx.arc(20, 15, 6, 0, Math.PI*2); // Dad
+        this.ctx.arc(45, 15, 6, 0, Math.PI*2); // Mom
+        this.ctx.arc(65, 18, 4, 0, Math.PI*2); // Kid
+        this.ctx.fill();
+        this.ctx.globalAlpha = 1;
+    }
+
+    drawConfetti() {
+        this.confetti.forEach(c => {
+            this.ctx.save();
+            this.ctx.translate(c.x, c.y);
+            this.ctx.rotate(c.rot);
+            this.ctx.fillStyle = c.color;
+            this.ctx.fillRect(-c.size/2, -c.size/2, c.size, c.size/2);
+            this.ctx.restore();
+        });
+    }
+
+    lerpColor(a, b, amount) {
+        const ah = parseInt(a.replace(/#/g, ''), 16),
+              ar = ah >> 16, ag = ah >> 8 & 0xff, ab = ah & 0xff,
+              bh = parseInt(b.replace(/#/g, ''), 16),
+              br = bh >> 16, bg = bh >> 8 & 0xff, bb = bh & 0xff,
+              rr = ar + amount * (br - ar),
+              rg = ag + amount * (bg - ag),
+              rb = ab + amount * (bb - ab);
+        return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb | 0).toString(16).slice(1);
+    }
+
+    loop(t) {
+        const dt = Math.min((t - (this.lastTime || t)) / 1000, 0.1);
+        this.lastTime = t;
+        this.update(dt);
+        this.draw();
+        requestAnimationFrame((t) => this.loop(t));
+    }
+}
+
+const game = new Game();
+</script>
+</body>
+</html>
